@@ -17,3 +17,24 @@ test('malformed formulas do not prevent the rest of the note rendering',()=>{con
 
 ## Next section`);assert.match(h,/cc0000|katex-error/);assert.match(h,/<h2>Next section/)});
 test('ordinary currency and links remain readable',()=>{const h=markdownHtml('Cost is $5 and $10.\n\n[Original](#paper=abc&page=1)');assert.doesNotMatch(h,/class="katex"/);assert.match(h,/href="#paper=abc/)});
+
+test('note preview renders wiki targets and leaves code literal',()=>{
+ const html=markdownHtml('[[Flow Matching]] · [[MolGEN#Flow Matching]] · '+
+  String.fromCharCode(96)+'[[Literal]]'+String.fromCharCode(96),{noteLinks:true});
+ assert.match(html,/href="#wikilink=Flow\+Matching"/);
+ assert.match(html,/href="#wikilink=MolGEN&amp;heading=Flow\+Matching"/);
+ assert.match(html,/<code>\[\[Literal\]\]<\/code>/);
+ assert.match(markdownHtml('[[Flow Matching]]'),/\[\[Flow Matching\]\]/);
+});
+
+test('wiki labels and query parameters cannot inject markup',()=>{
+ const html=markdownHtml('[[<img src=x>#A & B]]',{noteLinks:true});
+ assert.doesNotMatch(html,/<img/);
+ assert.match(html,/%3Cimg\+src%3Dx%3E&amp;heading=A\+%26\+B/);
+});
+
+test('heading slugs preserve Unicode and remove punctuation',async()=>{
+ const {headingSlug}=await import('../src/markdown.js');
+ assert.equal(headingSlug('Flow Matching!'),'flow-matching');
+ assert.equal(headingSlug('方法：能量 路徑'),'方法能量-路徑');
+});

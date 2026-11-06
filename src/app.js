@@ -4,7 +4,7 @@ import {validateAdditionalNotes} from './notes.js';
 import {cleanHighlightText} from './highlight-text.js';
 import {normalizeDoi,detectDois,crossrefMeta,fetchCrossref} from './metadata.js';
 import * as pdfjs from 'pdfjs-dist';
-import {renderMarkdown} from './markdown.js';
+import {headingSlug,renderMarkdown} from './markdown.js';
 import DOMPurify from 'dompurify';
 import { Cite } from '@citation-js/core';
 import '@citation-js/plugin-csl';
@@ -160,23 +160,70 @@ $('#note-link-form').onsubmit=async e=>{
  await put(current).catch(err=>toast(err.message));
 };
 async function flush(){clearTimeout(notesTimer);if(current){setNoteText($('#editor').value);await put(current)}}
-$('#editor').oninput=()=>{setNoteText($('#editor').value);$('#save-state').textContent='Saving…';clearTimeout(notesTimer);const p=current;notesTimer=setTimeout(()=>put(p).catch(()=>{}),500);preview()};function preview(){$('#preview').innerHTML=renderMarkdown($('#editor').value)}
+$('#editor').oninput=()=>{setNoteText($('#editor').value);$('#save-state').textContent='Saving…';clearTimeout(notesTimer);const p=current;notesTimer=setTimeout(()=>put(p).catch(()=>{}),500);preview()};function preview(){
+ const pane=$('#preview');
+ pane.innerHTML=renderMarkdown($('#editor').value,{noteLinks:true});
+ const used=new Set();
+ for(const heading of pane.querySelectorAll('h1,h2,h3,h4,h5,h6')){
+  const base=headingSlug(heading.textContent)||'section';
+  let slug=base;
+  for(let suffix=1;used.has(slug);suffix++)slug=base+'-'+suffix;
+  used.add(slug);
+  heading.id='note-heading-'+slug;
+ }
+}
+function jumpToHeading(slug){
+ const pane=$('#preview');
+ const heading=pane.querySelector('#'+CSS.escape('note-heading-'+slug));
+ if(!heading)return toast('Heading not found in this note.');
+ heading.tabIndex=-1;
+ heading.focus({preventScroll:true});
+ pane.scrollTop+=heading.getBoundingClientRect().top-pane.getBoundingClientRect().top-12;
+}
+function resolveNoteTitle(title){
+ const normalize=value=>value.trim().normalize('NFC').toLowerCase();
+ const query=normalize(title);
+ const matches=papers.flatMap(paper=>noteList(paper)
+  .filter(note=>normalize(note.title)===query).map(note=>({paper,note})));
+ const local=matches.filter(({paper})=>paper.id===current?.id);
+ const candidates=local.length?local:matches;
+ if(candidates.length>1){
+  toast('More than one note has that title. Use Insert note link to choose one.');
+  return;
+ }
+ if(!candidates.length)return toast('No note found named “'+title+'”.');
+ return candidates[0];
+}
+async function followNoteLink(paper,noteId,heading){
+ if(current?.id===paper.id)await switchNote(noteId);
+ else await openPaper(paper.id,noteId);
+ if(current?.id!==paper.id||activeNoteId!==noteId)return;
+ $('#preview-tab').click();
+ $('#preview').scrollTop=0;
+ $('#preview').focus({preventScroll:true});
+ if(heading)jumpToHeading(headingSlug(heading));
+}
 $('#preview').onclick=async e=>{
- const link=e.target.closest('a');
- const href=link?.getAttribute('href');
- if(!href?.startsWith('#paper='))return;
+ const href=e.target.closest('a')?.getAttribute('href');
+ if(!href?.startsWith('#')||href==='#')return;
  e.preventDefault();
  const target=new URLSearchParams(href.slice(1));
+ if(href.startsWith('#wikilink=')){
+  const match=resolveNoteTitle(target.get('wikilink'));
+  if(match)await followNoteLink(match.paper,match.note.id,target.get('heading'));
+  return;
+ }
+ if(!href.startsWith('#paper=')){
+  try{jumpToHeading(decodeURIComponent(href.slice(1)))}
+  catch{toast('Invalid heading link.')}
+  return;
+ }
  const paper=papers.find(p=>p.id===target.get('paper'));
  if(!paper)return toast('This paper is not in your library. Restore a backup containing that paper.');
  const noteId=target.get('note');
  if(noteId){
   if(!noteList(paper).some(note=>note.id===noteId))return toast('This note is not available in your library.');
-  if(current?.id===paper.id)await switchNote(noteId);
-  else await openPaper(paper.id,noteId);
-  $('#preview-tab').click();
-  $('#preview').scrollTop=0;
-  $('#preview').focus();
+  await followNoteLink(paper,noteId,target.get('heading'));
   return;
  }
  if(current?.id!==paper.id)await openPaper(paper.id);
