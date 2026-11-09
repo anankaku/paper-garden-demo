@@ -29,3 +29,7 @@ body.focus-mode>header,body.focus-mode #library-sidebar,body.focus-mode .paper-h
 .pdf-visible-caret[hidden]{display:none}
 
 .note-tools{display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:7px 15px;border-bottom:1px solid var(--line);font-size:11px}.note-tools select{flex:1 1 105px;width:0;padding:4px}.note-tools button{padding:4px 7px}
+
+#toast[popover]{position:fixed;inset:auto auto 25px 50%;margin:0;max-width:90vw;transform:translateX(-50%);border:0;box-shadow:0 4px 18px #172c2050;z-index:2147483647}
+#toast[popover]:not(:popover-open){display:none}
+#toast[popover]:popover-open{display:block}
