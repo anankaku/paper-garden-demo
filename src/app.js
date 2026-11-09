@@ -37,7 +37,8 @@ document.addEventListener('keydown',e=>{if(e.repeat||e.isComposing)return;if(e.a
 try{setSidebarCollapsed(localStorage.getItem('pg-sidebar-collapsed')==='true')}catch{}
 
 const ready=new Promise((res,rej)=>{const r=indexedDB.open('paper-garden-demo',1);r.onupgradeneeded=()=>r.result.createObjectStore('papers',{keyPath:'id'});r.onsuccess=()=>{db=r.result;res()};r.onerror=()=>rej(r.error)});
-function toast(t){$('#toast').textContent=t;$('#toast').style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').style.display='none',4000)}
+function toast(t){const el=$('#toast');el.textContent=t;if(el.showPopover){if(!el.matches(':popover-open'))el.showPopover()}else el.style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>{if(el.hidePopover&&el.matches(':popover-open'))el.hidePopover();else el.style.display='none'},4000)}
+function filenameFromTitle(title){const safe=String(title||'paper').normalize('NFC').replace(/[\\/:*?"<>|]/g,' ').replace(/\s+/g,' ').trim().replace(/[. ]+$/,'').slice(0,180)||'paper';return /\.pdf$/i.test(safe)?safe:safe+'.pdf'}
 async function put(p){const snapshot=structuredClone(p);saveQueue=saveQueue.catch(()=>{}).then(()=>new Promise((resolve,reject)=>{const tx=db.transaction('papers','readwrite');tx.objectStore('papers').put(snapshot);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error)}));try{await saveQueue;$('#save-state').textContent='✓ Saved in this browser · '+new Date().toLocaleTimeString()}catch(e){$('#save-state').textContent='Save failed: export a backup now';toast('Save failed: '+e.message);throw e}}
 async function all(){await ready;return new Promise((res,rej)=>{const r=db.transaction('papers').objectStore('papers').getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
 function list(){drawCollections();const q=$('#search').value.toLowerCase();$('#count').textContent=papers.length;$('#papers').innerHTML=papers.filter(p=>(activeCollection==='*'||(p.collection||'')===activeCollection)).filter(p=>[p.meta.title,p.meta.authors,p.meta.tags].join(' ').toLowerCase().includes(q)).map(p=>`<div class="paper ${p.id===current?.id?'selected':''}" role="button" tabindex="0" data-id="${esc(p.id)}"><b>▤ ${esc(p.meta.title)}</b><small>${esc(p.meta.authors?.split('\n')[0]||'Metadata incomplete')} ${esc(p.meta.year||'')}</small>${(p.meta.tags||'').split(',').filter(Boolean).map(t=>`<span class="tag">${esc(t.trim())}</span>`).join('')}<small>${esc(p.collection||'Unfiled')} · ${p.highlights.length} highlights · ${p.meta.verified?'Verified':'Unverified metadata'}</small></div>`).join('')||'<p class="muted">No matching papers.</p>';$('#papers').querySelectorAll('[data-id]').forEach(el=>{el.onclick=()=>{const retain=el.contains(document.activeElement);openPaper(el.dataset.id).then(()=>{if(retain)$('#papers [data-id=\"'+el.dataset.id+'\"]')?.focus()})};el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click()}else if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();(e.key==='ArrowDown'?el.nextElementSibling:el.previousElementSibling)?.focus()}}})}
@@ -76,7 +77,8 @@ function drawNoteControls(){
  const options=current?noteList(current):[];
  select.replaceChildren(...options.map(note=>new Option(note.title,note.id)));
  select.value=activeNoteId;
- for(const id of ['note-select','new-note','rename-note','link-note'])$('#'+id).disabled=!current;
+ for(const id of ['note-select','new-note','rename-note','link-note','delete-note'])$('#'+id).disabled=!current;
+ $('#delete-note').textContent=activeNoteId==='main'?'Clear note':'Delete note';
 }
 function loadNote(){
  $('#editor').value=noteText();
@@ -102,6 +104,21 @@ function openNoteTitleDialog(rename){
 }
 $('#new-note').onclick=()=>openNoteTitleDialog(false);
 $('#rename-note').onclick=()=>openNoteTitleDialog(true);
+$('#delete-note').onclick=async()=>{
+ if(!current)return;
+ const p=current,isMain=activeNoteId==='main',note=noteList(p).find(item=>item.id===activeNoteId);
+ if(!note)return;
+ const message=isMain?'Clear the main reading note? This removes its current text.':'Delete “'+note.title+'”? Links to this note will no longer open.';
+ if(!confirm(message))return;
+ try{
+  await flush();
+  if(isMain){p.note='';delete p.noteTitle}
+  else{p.extraNotes=(p.extraNotes||[]).filter(item=>item.id!==activeNoteId);activeNoteId='main'}
+  loadNote();
+  await put(p);
+  toast(isMain?'Main note cleared.':'Note deleted.');
+ }catch(e){toast(e.message)}
+};
 $('#note-title-form').onsubmit=async e=>{
  e.preventDefault();
  const p=current;
@@ -248,7 +265,7 @@ $('#lookup-doi').onclick=()=>{const q=$('#lookup-query').value.trim();if(!q)retu
 $('#lookup-query').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#lookup-doi').click()}};
 $('#detect-doi').onclick=()=>detectPdfDoi(true);
 $('#meta-dialog').addEventListener('close',()=>{lookupEpoch++;lookupBusy(false)});
-$('#meta-form').onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));data.verified=e.target.elements.verified.checked;current.meta=data;await put(current);$('#title').textContent=data.title;list();$('#meta-dialog').close()};document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('dialog').close());
+$('#meta-form').onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));data.verified=e.target.elements.verified.checked;current.meta=data;if(data.verified)current.filename=filenameFromTitle(data.title);await put(current);$('#title').textContent=data.title;list();$('#meta-dialog').close();toast('Metadata saved. The PDF filename is set for the exported library backup.')};document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>b.closest('dialog').close());
 function download(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 $('#export-md').onclick=async()=>{if(!current)return toast('Select a paper first');await flush();download(new Blob([noteText()],{type:'text/markdown;charset=utf-8'}),(activeNoteId==='main'&&!current.noteTitle?current.meta.title:noteList(current).find(n=>n.id===activeNoteId).title).replace(/[/\\:*?"<>|]/g,'_')+'.md')};
 $('#backup').onclick=async()=>{await flush();await saveQueue;const records=await Promise.all(papers.map(async p=>({...p,pdf:await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(p.pdf)})})));download(new Blob([JSON.stringify({format:'paper-garden',version:1,collections:collectionOptions(),papers:records})],{type:'application/json'}),'paper-garden-backup.json');toast('Full backup downloaded, including PDFs, metadata, notes and highlights.')};
